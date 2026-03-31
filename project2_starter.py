@@ -44,23 +44,37 @@ def load_listing_results(html_path) -> list[tuple]:
     listings = []
     seen_ids = set()
 
-    # Use the real listing cards from the HTML, not every random "id" in embedded scripts.
-    for card in soup.find_all("div", attrs={"itemprop": "itemListElement"}):
-        meta_url = card.find("meta", attrs={"itemprop": "url"})
-        meta_name = card.find("meta", attrs={"itemprop": "name"})
+    # Best source: visible card titles like:
+    # <div id="title_467507" data-testid="listing-card-title">Guest suite in Mission District</div>
+    title_divs = soup.find_all("div", attrs={"data-testid": "listing-card-title"})
 
-        if meta_url and meta_name:
-            url = meta_url.get("content", "")
-            title = meta_name.get("content", "").strip()
+    for div in title_divs:
+        title = re.sub(r"\s+", " ", div.get_text(" ", strip=True)).strip()
+        div_id = div.get("id", "")
 
-            match = re.search(r"/rooms/(\d+)", url)
-            if match:
-                listing_id = match.group(1)
+        match = re.search(r"title_(\d+)", div_id)
+        if match:
+            listing_id = match.group(1)
+            if listing_id not in seen_ids:
+                listings.append((title, listing_id))
+                seen_ids.add(listing_id)
 
-                # Skip duplicates
-                if listing_id not in seen_ids:
-                    listings.append((title, listing_id))
-                    seen_ids.add(listing_id)
+    # Fallback in case any titles are missing from data-testid blocks
+    if len(listings) < 18:
+        for card in soup.find_all("div", attrs={"itemprop": "itemListElement"}):
+            meta_url = card.find("meta", attrs={"itemprop": "url"})
+            title_div = card.find("div", id=re.compile(r"^title_\d+$"))
+
+            if meta_url and title_div:
+                url = meta_url.get("content", "")
+                title = re.sub(r"\s+", " ", title_div.get_text(" ", strip=True)).strip()
+
+                match = re.search(r"/rooms/(\d+)", url)
+                if match:
+                    listing_id = match.group(1)
+                    if listing_id not in seen_ids:
+                        listings.append((title, listing_id))
+                        seen_ids.add(listing_id)
 
     return listings
 
@@ -93,11 +107,14 @@ def get_listing_details(listing_id) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
 
-    # policy number
+    # ---------------- POLICY NUMBER ----------------
+    policy_number = "Pending"
+
     exact_match = re.search(r"\b(20\d{2}-00\d{4}STR|STR-000\d{4})\b", text)
     if exact_match:
         policy_number = exact_match.group(1)
     else:
+        # looser fallback so malformed values can still be captured and later flagged
         loose_match = re.search(r"\b(20\d{2}-\d{5,7}STR|STR-\d{6,8})\b", text)
         if loose_match:
             policy_number = loose_match.group(1)
@@ -105,17 +122,13 @@ def get_listing_details(listing_id) -> dict:
             policy_number = "Exempt"
         elif "pending" in text.lower():
             policy_number = "Pending"
-        else:
-            policy_number = "Pending"
 
-    # host type
-    if "superhost" in text.lower():
-        host_type = "Superhost"
-    else:
-        host_type = "regular"
+    # ---------------- HOST TYPE ----------------
+    host_type = "Superhost" if "superhost" in text.lower() else "regular"
 
-    # host name
+    # ---------------- HOST NAME ----------------
     host_name = ""
+
     host_patterns = [
         r"Hosted by ([A-Z][A-Za-z'&\- ]+)",
         r"([A-Z][A-Za-z'&\- ]+) is a Superhost",
@@ -126,49 +139,60 @@ def get_listing_details(listing_id) -> dict:
         match = re.search(pattern, text)
         if match:
             host_name = re.sub(r"\s+", " ", match.group(1)).strip()
-            host_name = re.sub(r"\s+Reviews?.*$", "", host_name)
-            host_name = re.sub(r"\s+Policy number:.*$", "", host_name)
             break
 
+    # clean trailing junk like "Joined in May", "Reviews", etc.
+    if host_name:
+        host_name = re.sub(r"\s+Joined in.*$", "", host_name)
+        host_name = re.sub(r"\s+\d+\s+Reviews?.*$", "", host_name)
+        host_name = re.sub(r"\s+Reviews?.*$", "", host_name)
+        host_name = re.sub(r"\s+Policy number:.*$", "", host_name)
+        host_name = host_name.strip()
+
+    # fallback from profile links
     if host_name == "":
         for a in soup.find_all("a", href=True):
             href = a.get("href", "")
             if "/users/show/" in href:
-                aria = re.sub(r"\s+", " ", a.get("aria-label", "")).strip()
-                visible = re.sub(r"\s+", " ", a.get_text(" ", strip=True)).strip()
-
-                for candidate in [aria, visible]:
-                    if candidate and re.fullmatch(r"[A-Z][A-Za-z'&\- ]{1,40}", candidate):
+                candidate = re.sub(r"\s+", " ", a.get_text(" ", strip=True)).strip()
+                if candidate:
+                    candidate = re.sub(r"\s+Joined in.*$", "", candidate).strip()
+                    if re.fullmatch(r"[A-Z][A-Za-z'&\- ]{1,40}", candidate):
                         host_name = candidate
                         break
-            if host_name != "":
-                break
 
-    # room type
-    lowered = text.lower()
+    # ---------------- ROOM TYPE ----------------
+    # IMPORTANT: do NOT use all page text here.
+    # Use listing-specific metadata only.
+    room_source = ""
+
     title_tag = soup.find("title")
-    title_text = title_tag.get_text(" ", strip=True).lower() if title_tag else ""
+    if title_tag:
+        room_source += " " + title_tag.get_text(" ", strip=True)
 
-    meta_desc = ""
-    meta = soup.find("meta", attrs={"property": "og:description"})
-    if meta and meta.get("content"):
-        meta_desc = meta["content"].lower()
+    og_title = soup.find("meta", attrs={"property": "og:title"})
+    if og_title and og_title.get("content"):
+        room_source += " " + og_title["content"]
 
-    combined_text = lowered + " " + title_text + " " + meta_desc
+    og_desc = soup.find("meta", attrs={"property": "og:description"})
+    if og_desc and og_desc.get("content"):
+        room_source += " " + og_desc["content"]
 
-    if "private room" in combined_text or re.search(r"\bprivate\b", combined_text):
+    room_source = room_source.lower()
+
+    if "private room" in room_source:
         room_type = "Private Room"
-    elif "shared room" in combined_text or re.search(r"\bshared\b", combined_text):
+    elif "shared room" in room_source:
         room_type = "Shared Room"
     else:
         room_type = "Entire Room"
 
-    # location rating
+    # ---------------- LOCATION RATING ----------------
     location_rating = 0.0
+
     rating_patterns = [
         r"Rated\s+([0-5](?:\.\d)?)\s+out of 5 for location",
-        r"Location[^0-9]{0,30}([0-5]\.\d)",
-        r'"location[^"]*"\s*:\s*"([0-5]\.\d)"'
+        r"Location[^0-9]{0,30}([0-5]\.\d)"
     ]
 
     for pattern in rating_patterns:
