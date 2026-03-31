@@ -272,14 +272,24 @@ def avg_location_rating_by_room_type(data) -> dict:
     Returns:
         dict: {room_type: average_location_rating}
     """
-    # TODO: Implement checkout logic following the instructions
-    # ==============================
-    # YOUR CODE STARTS HERE
-    # ==============================
-    pass
-    # ==============================
-    # YOUR CODE ENDS HERE
-    # ==============================
+    totals = {}
+    counts = {}
+
+    for row in data:
+        room_type = row[5]
+        rating = row[6]
+
+        if rating == 0.0:
+            continue
+
+        totals[room_type] = totals.get(room_type, 0.0) + rating
+        counts[room_type] = counts.get(room_type, 0) + 1
+
+    averages = {}
+    for room_type in totals:
+        averages[room_type] = round(totals[room_type] / counts[room_type], 1)
+
+    return averages
 
 
 def validate_policy_numbers(data) -> list[str]:
