@@ -24,8 +24,8 @@ import requests  # kept for extra credit parity
 """
 If you are getting "encoding errors" while trying to open, read, or write from a file, add the following argument to any of your open() functions:
     encoding="utf-8-sig"
-"""
 
+"""
 
 def load_listing_results(html_path) -> list[tuple]:
     """
@@ -37,14 +37,42 @@ def load_listing_results(html_path) -> list[tuple]:
     Returns:
         list[tuple]: A list of tuples containing (listing_title, listing_id)
     """
-    # TODO: Implement checkout logic following the instructions
-    # ==============================
-    # YOUR CODE STARTS HERE
-    # ==============================
-    pass
-    # ==============================
-    # YOUR CODE ENDS HERE
-    # ==============================
+    html = ""
+    with open(html_path, "r", encoding="utf-8-sig") as f:
+        html = f.read()
+
+    soup = BeautifulSoup(html, "html.parser")
+    listings = []
+    seen_ids = set()
+
+    pattern = re.compile(
+        r'"id":"(\d+)"(?:(?!\"id\":).){0,5000}?"title":"([^"]+)"',
+        re.DOTALL
+    )
+
+    for match in pattern.finditer(html):
+        listing_id = match.group(1)
+        listing_title = re.sub(r"\s+", " ", match.group(2)).strip()
+
+        if listing_id not in seen_ids and listing_title:
+            listings.append((listing_title, listing_id))
+            seen_ids.add(listing_id)
+
+    if not listings:
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            room_match = re.search(r"/rooms/(\d+)", href)
+            if room_match:
+                listing_id = room_match.group(1)
+                if listing_id in seen_ids:
+                    continue
+
+                listing_title = re.sub(r"\s+", " ", a.get_text(" ", strip=True)).strip()
+                if listing_title:
+                    listings.append((listing_title, listing_id))
+                    seen_ids.add(listing_id)
+
+    return listings
 
 
 def get_listing_details(listing_id) -> dict:
