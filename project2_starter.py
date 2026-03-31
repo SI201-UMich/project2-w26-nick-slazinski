@@ -94,14 +94,108 @@ def get_listing_details(listing_id) -> dict:
             }
         }
     """
-    # TODO: Implement checkout logic following the instructions
-    # ==============================
-    # YOUR CODE STARTS HERE
-    # ==============================
-    pass
-    # ==============================
-    # YOUR CODE ENDS HERE
-    # ==============================
+    base_dir = os.path.abspath(os.path.dirname(__file__))
+    html_path = os.path.join(base_dir, "html_files", f"listing_{listing_id}.html")
+
+    with open(html_path, "r", encoding="utf-8-sig") as f:
+        html = f.read()
+
+    soup = BeautifulSoup(html, "html.parser")
+    text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
+
+    # policy number
+    exact_match = re.search(r"\b(20\d{2}-00\d{4}STR|STR-000\d{4})\b", text)
+    if exact_match:
+        policy_number = exact_match.group(1)
+    else:
+        loose_match = re.search(r"\b(20\d{2}-\d{5,7}STR|STR-\d{6,8})\b", text)
+        if loose_match:
+            policy_number = loose_match.group(1)
+        elif "exempt" in text.lower():
+            policy_number = "Exempt"
+        elif "pending" in text.lower():
+            policy_number = "Pending"
+        else:
+            policy_number = "Pending"
+
+    # host type
+    if "superhost" in text.lower():
+        host_type = "Superhost"
+    else:
+        host_type = "regular"
+
+    # host name
+    host_name = ""
+    host_patterns = [
+        r"Hosted by ([A-Z][A-Za-z'&\- ]+)",
+        r"([A-Z][A-Za-z'&\- ]+) is a Superhost",
+        r"Meet your host,\s*([A-Z][A-Za-z'&\- ]+)"
+    ]
+
+    for pattern in host_patterns:
+        match = re.search(pattern, text)
+        if match:
+            host_name = re.sub(r"\s+", " ", match.group(1)).strip()
+            host_name = re.sub(r"\s+Reviews?.*$", "", host_name)
+            host_name = re.sub(r"\s+Policy number:.*$", "", host_name)
+            break
+
+    if host_name == "":
+        for a in soup.find_all("a", href=True):
+            href = a.get("href", "")
+            if "/users/show/" in href:
+                aria = re.sub(r"\s+", " ", a.get("aria-label", "")).strip()
+                visible = re.sub(r"\s+", " ", a.get_text(" ", strip=True)).strip()
+
+                for candidate in [aria, visible]:
+                    if candidate and re.fullmatch(r"[A-Z][A-Za-z'&\- ]{1,40}", candidate):
+                        host_name = candidate
+                        break
+            if host_name != "":
+                break
+
+    # room type
+    lowered = text.lower()
+    title_tag = soup.find("title")
+    title_text = title_tag.get_text(" ", strip=True).lower() if title_tag else ""
+
+    meta_desc = ""
+    meta = soup.find("meta", attrs={"property": "og:description"})
+    if meta and meta.get("content"):
+        meta_desc = meta["content"].lower()
+
+    combined_text = lowered + " " + title_text + " " + meta_desc
+
+    if "private room" in combined_text or re.search(r"\bprivate\b", combined_text):
+        room_type = "Private Room"
+    elif "shared room" in combined_text or re.search(r"\bshared\b", combined_text):
+        room_type = "Shared Room"
+    else:
+        room_type = "Entire Room"
+
+    # location rating
+    location_rating = 0.0
+    rating_patterns = [
+        r"Rated\s+([0-5](?:\.\d)?)\s+out of 5 for location",
+        r"Location[^0-9]{0,30}([0-5]\.\d)",
+        r'"location[^"]*"\s*:\s*"([0-5]\.\d)"'
+    ]
+
+    for pattern in rating_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            location_rating = float(match.group(1))
+            break
+
+    return {
+        listing_id: {
+            "policy_number": policy_number,
+            "host_type": host_type,
+            "host_name": host_name,
+            "room_type": room_type,
+            "location_rating": location_rating
+        }
+    }
 
 
 def create_listing_database(html_path) -> list[tuple]:
