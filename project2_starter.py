@@ -37,7 +37,6 @@ def load_listing_results(html_path) -> list[tuple]:
     Returns:
         list[tuple]: A list of tuples containing (listing_title, listing_id)
     """
-    html = ""
     with open(html_path, "r", encoding="utf-8-sig") as f:
         html = f.read()
 
@@ -45,31 +44,22 @@ def load_listing_results(html_path) -> list[tuple]:
     listings = []
     seen_ids = set()
 
-    pattern = re.compile(
-        r'"id":"(\d+)"(?:(?!\"id\":).){0,5000}?"title":"([^"]+)"',
-        re.DOTALL
-    )
+    # Use the real listing cards from the HTML, not every random "id" in embedded scripts.
+    for card in soup.find_all("div", attrs={"itemprop": "itemListElement"}):
+        meta_url = card.find("meta", attrs={"itemprop": "url"})
+        meta_name = card.find("meta", attrs={"itemprop": "name"})
 
-    for match in pattern.finditer(html):
-        listing_id = match.group(1)
-        listing_title = re.sub(r"\s+", " ", match.group(2)).strip()
+        if meta_url and meta_name:
+            url = meta_url.get("content", "")
+            title = meta_name.get("content", "").strip()
 
-        if listing_id not in seen_ids and listing_title:
-            listings.append((listing_title, listing_id))
-            seen_ids.add(listing_id)
+            match = re.search(r"/rooms/(\d+)", url)
+            if match:
+                listing_id = match.group(1)
 
-    if not listings:
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            room_match = re.search(r"/rooms/(\d+)", href)
-            if room_match:
-                listing_id = room_match.group(1)
-                if listing_id in seen_ids:
-                    continue
-
-                listing_title = re.sub(r"\s+", " ", a.get_text(" ", strip=True)).strip()
-                if listing_title:
-                    listings.append((listing_title, listing_id))
+                # Skip duplicates
+                if listing_id not in seen_ids:
+                    listings.append((title, listing_id))
                     seen_ids.add(listing_id)
 
     return listings
@@ -404,7 +394,10 @@ class TestCases(unittest.TestCase):
 
 
 def main():
-    detailed_data = create_listing_database(os.path.join("html_files", "search_results.html"))
+    base_dir = os.path.abspath(os.path.dirname(__file__))
+    search_path = os.path.join(base_dir, "html_files", "search_results.html")
+
+    detailed_data = create_listing_database(search_path)
     output_csv(detailed_data, "airbnb_dataset.csv")
 
 
