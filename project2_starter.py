@@ -303,14 +303,22 @@ def validate_policy_numbers(data) -> list[str]:
     Returns:
         list[str]: A list of listing_id values whose policy numbers do NOT match the valid format
     """
-    # TODO: Implement checkout logic following the instructions
-    # ==============================
-    # YOUR CODE STARTS HERE
-    # ==============================
-    pass
-    # ==============================
-    # YOUR CODE ENDS HERE
-    # ==============================
+    invalid_listing_ids = []
+
+    valid_pattern_1 = r"20\d{2}-00\d{4}STR"
+    valid_pattern_2 = r"STR-000\d{4}"
+
+    for row in data:
+        listing_id = row[1]
+        policy_number = row[2]
+
+        if policy_number == "Pending" or policy_number == "Exempt":
+            continue
+
+        if not re.fullmatch(valid_pattern_1, policy_number) and not re.fullmatch(valid_pattern_2, policy_number):
+            invalid_listing_ids.append(listing_id)
+
+    return invalid_listing_ids
 
 
 # EXTRA CREDIT
