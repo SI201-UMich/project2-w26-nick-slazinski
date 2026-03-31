@@ -331,14 +331,22 @@ def google_scholar_searcher(query):
     Returns:
         List of titles on the first page (list)
     """
-    # TODO: Implement checkout logic following the instructions
-    # ==============================
-    # YOUR CODE STARTS HERE
-    # ==============================
-    pass
-    # ==============================
-    # YOUR CODE ENDS HERE
-    # ==============================
+    url = "https://scholar.google.com/scholar"
+    params = {"q": query}
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    response = requests.get(url, params=params, headers=headers, timeout=15)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    titles = []
+
+    for h3 in soup.find_all("h3"):
+        title = re.sub(r"\s+", " ", h3.get_text(" ", strip=True)).strip()
+        if title:
+            titles.append(title)
+
+    return titles
 
 
 class TestCases(unittest.TestCase):
